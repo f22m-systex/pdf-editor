@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 套印編輯器 v1.6 (Demo 版)</title>
+    <!-- 引入 Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Fabric.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <!-- 引入 PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        /* 避免畫布選取時的藍色輪廓 */
+        canvas { outline: none; }
+        .canvas-container { margin: 0 auto; }
+        
+        /* 自訂捲軸樣式 */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body class="flex flex-col h-screen bg-gray-100 font-sans text-sm overflow-hidden select-none">
+
+    <!-- 頂部工具列 -->
+    <header id="top-header" class="bg-blue-800 text-white p-3 flex justify-between items-center shadow-md z-20 shrink-0 transition-colors">
+        <div class="flex items-center space-x-4">
+            <h1 class="text-lg font-bold flex items-center">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                PDF 套印編輯器 v1.6 
+                <span id="preview-badge" class="ml-2 text-yellow-300 text-sm bg-gray-700 px-2 rounded hidden">[預覽模式]</span>
+            </h1>
+            
+            <div id="edit-tools" class="flex items-center space-x-4">
+                <div class="h-6 w-px bg-blue-600"></div>
+                <button onclick="app.addField()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm transition font-medium flex items-center">
+                    <span class="mr-1">+</span> 新增欄位
+                </button>
+                <label class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm transition cursor-pointer font-medium flex items-center">
+                    載入底圖
+                    <input type="file" class="hidden" accept="application/pdf, image/png, image/jpeg" onchange="app.handleFileUpload(event)">
+                </label>
+            </div>
+
+            <div id="preview-tools" class="hidden items-center space-x-2 bg-gray-700 rounded p-1 px-2 border border-gray-600 ml-4">
+                <span class="text-xs text-gray-300 mr-1">外觀：</span>
+                <button onclick="app.setPreviewStyle('print')" id="btn-style-print" class="px-2 py-1 rounded text-xs transition bg-gray-500 text-white">列印實況</button>
+                <button onclick="app.setPreviewStyle('highlight')" id="btn-style-highlight" class="px-2 py-1 rounded text-xs transition hover:bg-yellow-700 text-gray-300">螢光筆</button>
+                <button onclick="app.setPreviewStyle('redbox')" id="btn-style-redbox" class="px-2 py-1 rounded text-xs transition hover:bg-red-700 text-gray-300">校對框</button>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+            <div class="text-xs text-blue-200 bg-blue-900/50 px-2 py-1 rounded border border-blue-700 hidden md:block">
+                縮放: Ctrl+滾輪 | 重設: Ctrl+0
+            </div>
+
+            <div id="pagination-controls" class="hidden items-center rounded p-1 space-x-2 mr-2 border bg-blue-900 border-blue-700">
+                <button onclick="app.changePage(-1)" id="btn-prev-page" class="px-2 py-0.5 hover:bg-white/20 disabled:opacity-50 rounded transition disabled:cursor-not-allowed">◀</button>
+                <span class="text-xs font-mono" id="page-indicator">頁 1 / 1</span>
+                <button onclick="app.changePage(1)" id="btn-next-page" class="px-2 py-0.5 hover:bg-white/20 disabled:opacity-50 rounded transition disabled:cursor-not-allowed">▶</button>
+            </div>
+
+            <div id="grid-controls" class="flex items-center bg-blue-900 rounded p-1.5 px-3 space-x-3 border border-blue-700">
+                <label class="flex items-center space-x-1.5 cursor-pointer text-xs">
+                    <input type="checkbox" id="cb-show-grid" checked onchange="app.toggleGridVisibility()" class="h-3.5 w-3.5 rounded text-blue-500">
+                    <span>顯示網格</span>
+                </label>
+                <label class="flex items-center space-x-1.5 cursor-pointer text-xs border-l border-blue-700 pl-3">
+                    <input type="checkbox" id="cb-snap-grid" checked class="h-3.5 w-3.5 rounded text-blue-500">
+                    <span>吸附網格</span>
+                </label>
+            </div>
+
+            <button onclick="app.togglePreviewMode()" id="btn-toggle-preview" class="px-3 py-1.5 rounded text-sm transition font-medium flex items-center bg-yellow-600 hover:bg-yellow-500 text-white">
+                👀 填表預覽
+            </button>
+            
+            <button onclick="app.exportXML()" id="btn-export" class="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm transition font-medium">
+                匯出 XML
+            </button>
+        </div>
+    </header>
+
+    <!-- 主要區塊 -->
+    <div class="flex-1 relative overflow-hidden flex bg-gray-500 transition-colors" id="main-content-area">
+        
+        <!-- 左側：XML 結構樹 -->
+        <aside id="left-panel" class="absolute left-0 top-0 bottom-0 bg-white border-r border-gray-300 flex flex-col z-10 transition-transform duration-300 ease-in-out shadow-lg w-64">
+            <div class="p-2 bg-gray-200 border-b border-gray-300 font-semibold text-gray-700 flex justify-between items-center shrink-0">
+                <span>文件結構</span>
+                <div class="flex items-center space-x-2">
+                    <span class="text-xs text-blue-600 bg-blue-100 px-1 rounded" id="field-count">0 個</span>
+                    <button onclick="app.toggleLeftPanel()" class="hover:bg-gray-300 rounded p-0.5" title="收合面板 (Ctrl+Shift+X)">◀</button>
+                </div>
+            </div>
+            <div class="flex-1 overflow-y-auto p-2" id="tree-container">
+                <!-- 樹狀結構由 JS 動態生成 -->
+            </div>
+        </aside>
+        
+        <!-- 左側展開按鈕 -->
+        <button id="btn-expand-left" onclick="app.toggleLeftPanel()" class="hidden absolute left-0 top-1/2 -translate-y-1/2 bg-white border border-gray-300 border-l-0 rounded-r py-4 px-1 shadow-md z-10 hover:bg-blue-50 text-gray-500" title="展開 XML 結構面板 (Ctrl+Shift+X)">▶</button>
+
+        <!-- 中央：畫布區 -->
+        <main id="canvas-main-area" class="absolute top-0 bottom-0 w-full overflow-hidden transition-all duration-300 ease-in-out pl-64 pr-80">
+            <div id="canvas-wrapper" class="w-full h-full overflow-auto outline-none transition-colors duration-300 flex" tabindex="0">
+                <!-- 佔位容器 -->
+                <div id="canvas-spacer" class="m-auto p-12 box-content flex-shrink-0 transition-all duration-200">
+                    <div id="canvas-shadow-box" class="relative shadow-2xl bg-white origin-top-left transition-transform duration-200">
+                        <canvas id="mainCanvas"></canvas>
+                        
+                        <!-- 讀取遮罩 -->
+                        <div id="loading-mask" class="hidden absolute inset-0 bg-white/70 flex items-center justify-center z-10 backdrop-blur-sm">
+                            <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部狀態列 -->
+            <div id="bottom-status" class="absolute bottom-4 left-1/2 -translate-x-1/2 flex space-x-2 pointer-events-none z-10 transition-transform duration-300">
+                <div class="text-xs text-gray-700 bg-white/90 shadow px-3 py-1.5 rounded-full backdrop-blur">
+                    縮放比例: <span id="zoom-indicator">100</span>%
+                </div>
+                <div class="text-xs text-gray-700 bg-white/90 shadow px-3 py-1.5 rounded-full backdrop-blur">
+                    第 <span id="status-page">1</span> 頁 | <span id="status-mode">原點 (0,0)</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- 右側：屬性編輯面板 -->
+        <aside id="right-panel" class="absolute right-0 top-0 bottom-0 bg-white border-l border-gray-300 flex flex-col z-10 transition-transform duration-300 ease-in-out shadow-lg w-80">
+            <div class="p-2 bg-gray-200 border-b border-gray-300 font-semibold text-gray-700 flex justify-between items-center shrink-0">
+                <button onclick="app.toggleRightPanel()" class="hover:bg-gray-300 rounded p-0.5" title="收合面板 (Ctrl+Shift+T)">▶</button>
+                <span>欄位屬性</span>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" id="prop-panel-content">
+                <!-- 預設空狀態 -->
+                <div id="prop-empty-state" class="flex-1 flex flex-col items-center justify-center text-gray-400 p-6 text-center mt-10">
+                    <p>請在畫布上選取欄位</p>
+                </div>
+                
+                <!-- 單選屬性表單 (由 JS 控制顯示) -->
+                <div id="prop-single-state" class="hidden">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="col-span-2">
+                            <label class="block text-xs text-gray-500 mb-1">欄位名稱</label>
+                            <input type="text" id="prop-name" oninput="app.updateFieldFromInput()" class="w-full border border-gray-300 rounded p-1.5 outline-none focus:ring-1 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">所屬區塊</label>
+                            <select id="prop-section" onchange="app.updateFieldFromInput()" class="w-full border border-gray-300 rounded p-1.5 outline-none">
+                                <option value="Header">Header</option>
+                                <option value="Body">Body</option>
+                                <option value="Footer">Footer</option>
+                                <option value="Grand">Grand</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">型別</label>
+                            <select id="prop-type" onchange="app.updateFieldFromInput()" class="w-full border border-gray-300 rounded p-1.5 outline-none">
+                                <option value="X">字串 (X)</option>
+                                <option value="9">數字 (9)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">限制長度</label>
+                            <input type="number" id="prop-length" oninput="app.updateFieldFromInput()" min="1" class="w-full border border-gray-300 rounded p-1.5 outline-none">
+                        </div>
+                        <div class="col-span-2 border-t pt-3 mt-1 grid grid-cols-2 gap-3">
+                            <div><label class="block text-xs text-gray-500 mb-1">X 座標</label><input type="number" id="prop-x" oninput="app.updateFieldFromInput()" class="w-full border border-gray-300 rounded p-1.5 outline-none"></div>
+                            <div><label class="block text-xs text-gray-500 mb-1">Y 座標</label><input type="number" id="prop-y" oninput="app.updateFieldFromInput()" class="w-full border border-gray-300 rounded p-1.5 outline-none"></div>
+                            <div><label class="block text-xs text-gray-500 mb-1">寬度</label><input type="number" id="prop-width" oninput="app.updateFieldFromInput()" class="w-full border border-gray-300 bg-yellow-50 rounded p-1.5 outline-none"></div>
+                            <div><label class="block text-xs text-gray-500 mb-1">字級</label><input type="number" id="prop-font" oninput="app.updateFieldFromInput()" min="6" class="w-full border border-gray-300 rounded p-1.5 outline-none"></div>
+                        </div>
+                        <div class="col-span-2 border-t pt-3 mt-1">
+                            <label class="block text-xs font-bold text-gray-700 mb-1">預覽測試資料 (Mock Data)</label>
+                            <input type="text" id="prop-mock" oninput="app.updateFieldFromInput()" placeholder="例如：張三、10000" class="w-full border border-gray-300 rounded p-1.5 outline-none">
+                        </div>
+                    </div>
+                    <div class="mt-6">
+                        <button onclick="app.deleteSelectedField()" class="w-full py-2 bg-red-50 text-red-600 hover:bg-red-100 rounded border border-red-200 transition font-medium">刪除欄位</button>
+                    </div>
+                </div>
+
+                <!-- 多選狀態 (對齊工具) -->
+                <div id="prop-multi-state" class="hidden">
+                    <div class="bg-blue-50 border border-blue-200 rounded p-3 text-blue-800 font-medium mb-4">
+                        已選取 <span id="multi-count">0</span> 個欄位
+                    </div>
+                    <div class="border-t pt-3 mt-1">
+                        <div class="text-xs font-semibold text-gray-700 mb-3">對齊工具</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="app.alignSelected('left')" class="py-2 px-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs text-gray-700 transition">齊左</button>
+                            <button onclick="app.alignSelected('right')" class="py-2 px-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs text-gray-700 transition">齊右</button>
+                            <button onclick="app.alignSelected('top')" class="py-2 px-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs text-gray-700 transition">齊上緣</button>
+                            <button onclick="app.alignSelected('bottom')" class="py-2 px-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs text-gray-700 transition">齊下緣</button>
+                            <button onclick="app.alignSelected('center-h')" class="py-2 px-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded text-xs text-gray-700 transition col-span-2">左右置中</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 右側展開按鈕 -->
+        <button id="btn-expand-right" onclick="app.toggleRightPanel()" class="hidden absolute right-0 top-1/2 -translate-y-1/2 bg-white border border-gray-300 border-r-0 rounded-l py-4 px-1 shadow-md z-10 hover:bg-blue-50 text-gray-500" title="展開屬性面板 (Ctrl+Shift+T)">◀</button>
+
+        <!-- 預覽模式的右側測試資料面板 -->
+        <aside id="preview-panel" class="hidden absolute right-0 top-0 bottom-0 bg-gray-800 border-l border-gray-700 flex flex-col z-10 shadow-lg w-80 text-gray-300">
+            <div class="p-3 bg-gray-900 border-b border-gray-700 font-semibold text-white flex justify-between items-center">
+                <span>批次資料測試</span>
+                <span class="text-xs bg-gray-700 px-2 py-0.5 rounded text-gray-300" id="preview-field-count">0 欄</span>
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto">
+                <p class="text-xs text-gray-400 mb-4">在此模式下，畫布將顯示各欄位設定的「測試資料」，讓您預覽真實套印結果。</p>
+                
+                <div class="space-y-4">
+                    <div class="bg-gray-700 p-3 rounded border border-gray-600">
+                        <h3 class="text-sm font-semibold text-white mb-2">整批匯入/匯出 (JSON)</h3>
+                        <div class="flex space-x-2">
+                            <label class="flex-1 text-center py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-xs cursor-pointer transition">
+                                📂 載入資料
+                                <input type="file" class="hidden" accept="application/json" onchange="app.importMockData(event)">
+                            </label>
+                            <button onclick="app.exportMockData()" class="flex-1 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-xs transition">
+                                💾 儲存資料
+                            </button>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-semibold text-white mb-2 border-b border-gray-700 pb-1" id="preview-page-title">當前頁面 (第 1 頁)</h3>
+                        <div id="preview-data-list" class="space-y-2 mt-2">
+                            <!-- 動態生成輸入框 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <!-- 核心應用程式邏輯 -->
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const app = {
+            // 常數設定
+            A4_WIDTH: 595,
+            A4_HEIGHT: 842,
+            GRID_SIZE: 10,
+            COLOR_NORMAL: 'rgba(173, 216, 230, 0.4)',
+            COLOR_SELECTED: 'rgba(255, 255, 0, 0.6)',
+            BORDER_NORMAL: '#88aacc',
+            BORDER_SELECTED: '#ffaa00',
+
+            // 狀態變數
+            canvas: null,
+            pdfDoc: null,
+            gridGroup: null,
+            fields: [],
+            selectedField: null,
+            selectedObjectsCount: 0,
+            
+            currentPage: 1,
+            totalPages: 1,
+            pageBackgrounds: new Map(),
+
+            isPreviewMode: false,
+            previewStyle: 'print', // print, highlight, redbox
+            
+            isLeftPanelOpen: true,
+            isRightPanelOpen: true,
+            currentZoom: 1.0,
+
+            // 初始化
+            init: function() {
+                this.canvas = new fabric.Canvas('mainCanvas', { 
+                    width: this.A4_WIDTH, 
+                    height: this.A4_HEIGHT, 
+                    preserveObjectStacking: true 
+                });
+
+                this.initGrid();
+                this.bindEvents();
+                this.updateUI();
+            },
+
+            initGrid: function() {
+                const gridLines = [];
+                const gridOptions = { stroke: '#e5e7eb', strokeWidth: 1, selectable: false, evented: false };
+                for (let i = 0; i < (this.A4_WIDTH / this.GRID_SIZE); i++) gridLines.push(new fabric.Line([ i * this.GRID_SIZE, 0, i * this.GRID_SIZE, this.A4_HEIGHT], gridOptions));
+                for (let i = 0; i < (this.A4_HEIGHT / this.GRID_SIZE); i++) gridLines.push(new fabric.Line([ 0, i * this.GRID_SIZE, this.A4_WIDTH, i * this.GRID_SIZE], gridOptions));
+                this.gridGroup = new fabric.Group(gridLines, { selectable: false, evented: false, visible: true });
+                this.canvas.add(this.gridGroup);
+                this.gridGroup.sendToBack(); 
+            },
+
+            bindEvents: function() {
+                this.canvas.on('selection:created', (e) => this.onObjectSelected(e));
+                this.canvas.on('selection:updated', (e) => this.onObjectSelected(e));
+                this.canvas.on('selection:cleared', () => this.onSelectionCleared());
+                this.canvas.on('object:moving', (e) => this.onObjectMoving(e));
+                this.canvas.on('object:modified', (e) => this.onObjectModified(e));
+
+                // 處理縮放
+                const wrapper = document.getElementById('canvas-wrapper');
+                wrapper.addEventListener('wheel', (e) => {
+                    if (e.ctrlKey) {
+                        e.preventDefault();
+                        if (e.deltaY < 0) this.zoomIn();
+                        else this.zoomOut();
+                    }
+                }, { passive: false });
+
+                // 處理快捷鍵
+                window.addEventListener('keydown', (e) => {
+                    const activeEl = document.activeElement;
+                    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'SELECT')) return;
+
+                    if (e.ctrlKey) {
+                        if (e.key === '=' || e.key === '+') { e.preventDefault(); this.zoomIn(); return; }
+                        if (e.key === '-') { e.preventDefault(); this.zoomOut(); return; }
+                        if (e.key === '0') { e.preventDefault(); this.resetZoom(); return; }
+                    }
+
+                    if (e.ctrlKey && e.shiftKey) {
+                        if (e.key.toUpperCase() === 'X') { e.preventDefault(); this.toggleLeftPanel(); return; }
+                        if (e.key.toUpperCase() === 'T') { e.preventDefault(); this.toggleRightPanel(); return; }
+                        
+                        if (!this.isPreviewMode) {
+                            switch (e.key.toUpperCase()) {
+                                case 'L': this.alignSelected('left'); break;
+                                case 'R': this.alignSelected('right'); break;
+                                case 'U': this.alignSelected('top'); break;
+                                case 'D': this.alignSelected('bottom'); break;
+                                case 'H': this.alignSelected('center-h'); break;
+                            }
+                        }
+                    }
+
+                    if (!this.isPreviewMode) {
+                        if (e.key === 'Delete' || e.key === 'Backspace') { this.deleteSelectedField(); return; }
+                        
+                        const activeObj = this.canvas.getActiveObject();
+                        if (activeObj) {
+                            let step = 1;
+                            if (e.ctrlKey) step = 10;
+                            else if (e.shiftKey) step = 5;
+
+                            let moved = false;
+                            switch (e.key) {
+                                case 'ArrowUp': activeObj.set('top', activeObj.top - step); moved = true; break;
+                                case 'ArrowDown': activeObj.set('top', activeObj.top + step); moved = true; break;
+                                case 'ArrowLeft': activeObj.set('left', activeObj.left - step); moved = true; break;
+                                case 'ArrowRight': activeObj.set('left', activeObj.left + step); moved = true; break;
+                            }
+                            if (moved) {
+                                e.preventDefault();
+                                activeObj.setCoords();
+                                this.canvas.renderAll();
+                                this.syncObjectToModel(activeObj);
+                            }
+                        }
+                    }
+                });
+            },
+
+            // --- 畫布事件處理 ---
+            onObjectSelected: function(e) {
+                if (this.isPreviewMode) return;
+                this.canvas.getObjects().forEach(o => { if (o.id) o.set('backgroundColor', this.COLOR_NORMAL); });
+                const activeObjs = this.canvas.getActiveObjects();
+                activeObjs.forEach(o => { if (o.id) o.set('backgroundColor', this.COLOR_SELECTED); });
+                this.canvas.renderAll();
+                
+                this.selectedObjectsCount = activeObjs.length;
+                this.selectedField = this.selectedObjectsCount === 1 ? this.fields.find(f => f.id === activeObjs[0].id) : null;
+                this.updateUI();
+            },
+
+            onSelectionCleared: function() {
+                if (this.isPreviewMode) return;
+                this.canvas.getObjects().forEach(o => { if (o.id) o.set('backgroundColor', this.COLOR_NORMAL); });
+                this.canvas.renderAll();
+                this.selectedObjectsCount = 0;
+                this.selectedField = null;
+                this.updateUI();
+            },
+
+            onObjectMoving: function(e) {
+                if (this.isPreviewMode) return;
+                const obj = e.target;
+                const snap = document.getElementById('cb-snap-grid').checked;
+                if (snap) {
+                    obj.set({ 
+                        left: Math.round(obj.left / this.GRID_SIZE) * this.GRID_SIZE, 
+                        top: Math.round(obj.top / this.GRID_SIZE) * this.GRID_SIZE 
+                    });
+                }
+                this.syncObjectToModel(obj);
+            },
+
+            onObjectModified: function(e) {
+                if (this.isPreviewMode) return;
+                const target = e.target;
+                if (target.type === 'activeSelection') {
+                    const objects = target.getObjects();
+                    this.canvas.discardActiveObject();
+                    objects.forEach(obj => {
+                        if (obj.scaleX !== 1) obj.set({ width: Math.round(obj.width * obj.scaleX), scaleX: 1 });
+                        this.syncObjectToModel(obj);
+                    });
+                    const sel = new fabric.ActiveSelection(objects, { canvas: this.canvas });
+                    this.canvas.setActiveObject(sel);
+                    this.canvas.requestRenderAll();
+                } else {
+                    if (target.scaleX !== 1) target.set({ width: Math.round(target.width * target.scaleX), scaleX: 1 });
+                    this.syncObjectToModel(target);
+                }
+            },
+
+            syncObjectToModel: function(obj) {
+                const field = this.fields.find(f => f.id === obj.id);
+                if (field) {
+                    field.x = Math.round(obj.left);
+                    field.y = Math.round(obj.top);
+                    field.width = Math.round(obj.width);
+                    field.height = Math.round(obj.height); 
+                    if (this.selectedField && this.selectedField.id === field.id) {
+                        this.updatePropPanelFromModel(); // 即時更新右側面板數值
+                    }
+                }
+            },
+
+            // --- UI 更新邏輯 (取代 Angular 的資料綁定) ---
+            updateUI: function() {
+                // 更新數字
+                document.getElementById('field-count').textContent = `${this.fields.length} 個`;
+                document.getElementById('preview-field-count').textContent = `${this.fields.length} 欄`;
+                document.getElementById('page-indicator').textContent = `頁 ${this.currentPage} / ${this.totalPages}`;
+                document.getElementById('status-page').textContent = this.currentPage;
+                
+                // 控制分頁按鈕
+                const pgContainer = document.getElementById('pagination-controls');
+                if (this.totalPages > 1) {
+                    pgContainer.classList.remove('hidden');
+                    pgContainer.classList.add('flex');
+                    document.getElementById('btn-prev-page').disabled = this.currentPage === 1;
+                    document.getElementById('btn-next-page').disabled = this.currentPage === this.totalPages;
+                } else {
+                    pgContainer.classList.add('hidden');
+                    pgContainer.classList.remove('flex');
+                }
+
+                this.renderTree();
+                
+                // 屬性面板顯示邏輯
+                document.getElementById('prop-empty-state').classList.toggle('hidden', this.selectedObjectsCount > 0);
+                document.getElementById('prop-single-state').classList.toggle('hidden', this.selectedObjectsCount !== 1);
+                document.getElementById('prop-multi-state').classList.toggle('hidden', this.selectedObjectsCount < 2);
+                
+                if (this.selectedObjectsCount > 1) {
+                    document.getElementById('multi-count').textContent = this.selectedObjectsCount;
+                }
+                
+                if (this.selectedObjectsCount === 1 && this.selectedField) {
+                    this.updatePropPanelFromModel();
+                }
+
+                if (this.isPreviewMode) {
+                    this.renderPreviewDataList();
+                }
+            },
+
+            renderTree: function() {
+                const container = document.getElementById('tree-container');
+                let html = '';
+                
+                for (let p = 1; p <= this.totalPages; p++) {
+                    const isCurrent = p === this.currentPage;
+                    html += `
+                        <div class="mb-4">
+                            <div class="font-bold text-blue-800 flex items-center p-1 bg-blue-50 rounded border border-blue-100 mb-1 cursor-pointer" onclick="app.changePage(${p})">
+                                📄 第 ${p} 頁 ${isCurrent ? '<span class="ml-2 text-xs bg-blue-500 text-white px-1.5 rounded-full">目前</span>' : ''}
+                            </div>
+                            <div class="pl-3 border-l-2 border-gray-100 ml-2">`;
+                    
+                    ['Header', 'Body', 'Footer', 'Grand'].forEach(section => {
+                        const sectionFields = this.fields.filter(f => f.page === p && f.section === section);
+                        html += `<div class="mb-1">
+                                    <div class="font-semibold text-gray-600 text-xs py-1">${section}</div>
+                                    <div class="pl-2 space-y-0.5">`;
+                        
+                        if (sectionFields.length === 0) {
+                            html += `<div class="text-gray-300 italic text-[10px] p-1">無</div>`;
+                        } else {
+                            sectionFields.forEach(f => {
+                                const isSel = this.selectedField && this.selectedField.id === f.id;
+                                html += `<div onclick="app.selectField('${f.id}')" class="p-1 rounded cursor-pointer hover:bg-blue-100 border flex justify-between items-center text-xs ${isSel ? 'bg-blue-100 border-blue-300' : 'border-transparent'}">
+                                            <span class="truncate" title="${f.name}">${f.name}</span>
+                                            <span class="text-gray-400">(${f.length})</span>
+                                         </div>`;
+                            });
+                        }
+                        html += `</div></div>`;
+                    });
+                    html += `</div></div>`;
+                }
+                container.innerHTML = html;
+            },
+
+            updatePropPanelFromModel: function() {
+                const f = this.selectedField;
+                if (!f) return;
+                document.getElementById('prop-name').value = f.name;
+                document.getElementById('prop-section').value = f.section;
+                document.getElementById('prop-type').value = f.type;
+                document.getElementById('prop-length').value = f.length;
+                document.getElementById('prop-x').value = f.x;
+                document.getElementById('prop-y').value = f.y;
+                document.getElementById('prop-width').value = f.width;
+                document.getElementById('prop-font').value = f.fontSize;
+                document.getElementById('prop-mock').value = f.mockValue;
+            },
+
+            updateFieldFromInput: function() {
+                const f = this.selectedField;
+                if (!f) return;
+                f.name = document.getElementById('prop-name').value;
+                f.section = document.getElementById('prop-section').value;
+                f.type = document.getElementById('prop-type').value;
+                f.length = parseInt(document.getElementById('prop-length').value) || 1;
+                f.x = parseInt(document.getElementById('prop-x').value) || 0;
+                f.y = parseInt(document.getElementById('prop-y').value) || 0;
+                f.width = parseInt(document.getElementById('prop-width').value) || 10;
+                f.fontSize = parseInt(document.getElementById('prop-font').value) || 10;
+                f.mockValue = document.getElementById('prop-mock').value;
+
+                // 更新畫布物件
+                const obj = this.canvas.getObjects().find(o => o.id === f.id);
+                if (obj) {
+                    obj.set({
+                        text: this.getDevDisplayText(f),
+                        left: f.x, top: f.y, width: f.width, fontSize: f.fontSize
+                    });
+                    obj.setCoords();
+                    this.canvas.renderAll();
+                }
+                this.renderTree(); // 名稱/長度可能改變，重繪樹狀圖
+            },
+
+            // --- 縮放與面板佈局 ---
+            zoomIn: function(step = 0.1) { this.currentZoom = Math.min(3.0, this.currentZoom + step); this.applyZoom(); },
+            zoomOut: function(step = 0.1) { this.currentZoom = Math.max(0.2, this.currentZoom - step); this.applyZoom(); },
+            resetZoom: function() { this.currentZoom = 1.0; this.applyZoom(); },
+            
+            applyZoom: function() {
+                document.getElementById('canvas-shadow-box').style.transform = `scale(${this.currentZoom})`;
+                document.getElementById('canvas-spacer').style.width = `${this.A4_WIDTH * this.currentZoom}px`;
+                document.getElementById('canvas-spacer').style.height = `${this.A4_HEIGHT * this.currentZoom}px`;
+                document.getElementById('zoom-indicator').textContent = (this.currentZoom * 100).toFixed(0);
+            },
+
+            toggleLeftPanel: function() {
+                this.isLeftPanelOpen = !this.isLeftPanelOpen;
+                document.getElementById('left-panel').classList.toggle('-translate-x-full', !this.isLeftPanelOpen);
+                document.getElementById('btn-expand-left').classList.toggle('hidden', this.isLeftPanelOpen);
+                document.getElementById('canvas-main-area').style.paddingLeft = this.isLeftPanelOpen ? '16rem' : '0';
+            },
+
+            toggleRightPanel: function() {
+                this.isRightPanelOpen = !this.isRightPanelOpen;
+                document.getElementById('right-panel').classList.toggle('translate-x-full', !this.isRightPanelOpen);
+                document.getElementById('btn-expand-right').classList.toggle('hidden', this.isRightPanelOpen);
+                document.getElementById('canvas-main-area').style.paddingRight = this.isRightPanelOpen ? '20rem' : '0';
+            },
+
+            // --- 預覽模式邏輯 ---
+            togglePreviewMode: function() {
+                this.isPreviewMode = !this.isPreviewMode;
+                
+                const btn = document.getElementById('btn-toggle-preview');
+                const header = document.getElementById('top-header');
+                const mainArea = document.getElementById('main-content-area');
+                
+                if (this.isPreviewMode) {
+                    this.canvas.discardActiveObject();
+                    this.onSelectionCleared();
+                    
+                    btn.innerHTML = '✎ 返回編輯';
+                    btn.className = "px-3 py-1.5 rounded text-sm transition font-medium flex items-center bg-gray-200 hover:bg-white text-gray-900";
+                    header.classList.add('bg-gray-800');
+                    mainArea.classList.add('bg-gray-900');
+                    document.getElementById('preview-badge').classList.remove('hidden');
+                    
+                    document.getElementById('edit-tools').classList.add('hidden');
+                    document.getElementById('grid-controls').classList.add('hidden');
+                    document.getElementById('btn-export').classList.add('hidden');
+                    document.getElementById('preview-tools').classList.remove('hidden');
+                    document.getElementById('preview-tools').classList.add('flex');
+                    document.getElementById('status-mode').textContent = '預覽唯讀';
+                    
+                    // 強制收起編輯面板，展開預覽面板
+                    document.getElementById('left-panel').classList.add('-translate-x-full');
+                    document.getElementById('right-panel').classList.add('translate-x-full');
+                    document.getElementById('btn-expand-left').classList.add('hidden');
+                    document.getElementById('btn-expand-right').classList.add('hidden');
+                    document.getElementById('preview-panel').classList.remove('hidden');
+                    
+                    document.getElementById('canvas-main-area').style.paddingLeft = '0';
+                    document.getElementById('canvas-main-area').style.paddingRight = '20rem';
+                    document.getElementById('canvas-shadow-box').classList.add('ring-4', 'ring-gray-700');
+
+                } else {
+                    btn.innerHTML = '👀 填表預覽';
+                    btn.className = "px-3 py-1.5 rounded text-sm transition font-medium flex items-center bg-yellow-600 hover:bg-yellow-500 text-white";
+                    header.classList.remove('bg-gray-800');
+                    mainArea.classList.remove('bg-gray-900');
+                    document.getElementById('preview-badge').classList.add('hidden');
+                    
+                    document.getElementById('edit-tools').classList.remove('hidden');
+                    document.getElementById('grid-controls').classList.remove('hidden');
+                    document.getElementById('btn-export').classList.remove('hidden');
+                    document.getElementById('preview-tools').classList.add('hidden');
+                    document.getElementById('preview-tools').classList.remove('flex');
+                    document.getElementById('status-mode').textContent = '原點 (0,0)';
+                    
+                    // 恢復面板狀態
+                    document.getElementById('left-panel').classList.toggle('-translate-x-full', !this.isLeftPanelOpen);
+                    document.getElementById('btn-expand-left').classList.toggle('hidden', this.isLeftPanelOpen);
+                    document.getElementById('right-panel').classList.toggle('translate-x-full', !this.isRightPanelOpen);
+                    document.getElementById('btn-expand-right').classList.toggle('hidden', this.isRightPanelOpen);
+                    document.getElementById('preview-panel').classList.add('hidden');
+                    
+                    document.getElementById('canvas-main-area').style.paddingLeft = this.isLeftPanelOpen ? '16rem' : '0';
+                    document.getElementById('canvas-main-area').style.paddingRight = this.isRightPanelOpen ? '20rem' : '0';
+                    document.getElementById('canvas-shadow-box').classList.remove('ring-4', 'ring-gray-700');
+                }
+
+                this.toggleGridVisibility();
+                this.updatePreviewDataOnCanvas();
+            },
+
+            setPreviewStyle: function(style) {
+                this.previewStyle = style;
+                // 更新按鈕外觀
+                document.getElementById('btn-style-print').className = `px-2 py-1 rounded text-xs transition ${style === 'print' ? 'bg-gray-500 text-white' : 'hover:bg-gray-600 text-gray-300'}`;
+                document.getElementById('btn-style-highlight').className = `px-2 py-1 rounded text-xs transition ${style === 'highlight' ? 'bg-yellow-600 text-white' : 'hover:bg-yellow-700 text-gray-300'}`;
+                document.getElementById('btn-style-redbox').className = `px-2 py-1 rounded text-xs transition ${style === 'redbox' ? 'bg-red-600 text-white' : 'hover:bg-red-700 text-gray-300'}`;
+                
+                this.updatePreviewDataOnCanvas();
+            },
+
+            updatePreviewDataOnCanvas: function() {
+                this.canvas.getObjects().forEach(obj => {
+                    if (obj.id) { 
+                        const fieldData = this.fields.find(f => f.id === obj.id);
+                        if (!fieldData) return;
+
+                        if (this.isPreviewMode) {
+                            const displayText = fieldData.mockValue ? fieldData.mockValue : '[未設定]';
+                            obj.set({ text: displayText, selectable: false, evented: false, lineHeight: 1 });
+                            switch (this.previewStyle) {
+                                case 'print': obj.set({ backgroundColor: 'transparent', borderColor: 'transparent', fill: '#000000', stroke: null, strokeWidth: 0 }); break;
+                                case 'highlight': obj.set({ backgroundColor: 'rgba(255, 255, 0, 0.4)', borderColor: 'transparent', fill: '#000000', stroke: null, strokeWidth: 0 }); break;
+                                case 'redbox': obj.set({ backgroundColor: 'transparent', borderColor: 'red', fill: 'red', stroke: 'red', strokeWidth: 1, strokeDashArray: [2, 2] }); break;
+                            }
+                        } else {
+                            obj.set({ text: this.getDevDisplayText(fieldData), lineHeight: 1.2, backgroundColor: this.COLOR_NORMAL, borderColor: this.BORDER_SELECTED, cornerColor: this.BORDER_SELECTED, fill: 'rgb(51, 51, 51)', stroke: null, strokeWidth: 0, selectable: true, evented: true });
+                        }
+                    }
+                });
+                this.canvas.requestRenderAll();
+            },
+
+            renderPreviewDataList: function() {
+                document.getElementById('preview-page-title').textContent = `當前頁面 (第 ${this.currentPage} 頁)`;
+                const list = document.getElementById('preview-data-list');
+                const pageFields = this.fields.filter(f => f.page === this.currentPage);
+                
+                if (pageFields.length === 0) {
+                    list.innerHTML = `<div class="text-gray-500 text-xs italic text-center py-4">此頁尚無欄位</div>`;
+                    return;
+                }
+
+                let html = '';
+                pageFields.forEach(f => {
+                    html += `
+                    <div class="flex flex-col">
+                        <label class="text-xs text-gray-400 mb-0.5 flex justify-between">
+                            <span class="truncate pr-2">${f.name}</span><span class="text-gray-500">(${f.length})</span>
+                        </label>
+                        <input type="text" value="${f.mockValue}" oninput="app.updateMockData('${f.id}', this.value)"
+                               class="w-full bg-gray-900 border border-gray-600 rounded p-1.5 text-white text-sm outline-none focus:border-blue-500" 
+                               placeholder="[未設定]">
+                    </div>`;
+                });
+                list.innerHTML = html;
+            },
+
+            updateMockData: function(id, val) {
+                const f = this.fields.find(x => x.id === id);
+                if (f) {
+                    f.mockValue = val;
+                    this.updatePreviewDataOnCanvas();
+                }
+            },
+
+            toggleGridVisibility: function() {
+                if (this.gridGroup) {
+                    const isChecked = document.getElementById('cb-show-grid').checked;
+                    this.gridGroup.set({ visible: isChecked && !this.isPreviewMode });
+                    this.canvas.requestRenderAll();
+                }
+            },
+
+            // --- PDF 與檔案處理 ---
+            handleFileUpload: function(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                if (file.type === 'application/pdf') this.loadPdfDocument(file);
+                else if (file.type.startsWith('image/')) this.loadImageBackground(file);
+            },
+
+            loadPdfDocument: function(file) {
+                document.getElementById('loading-mask').classList.remove('hidden');
+                const fileReader = new FileReader();
+                fileReader.onload = (e) => {
+                    const typedarray = new Uint8Array(e.target.result);
+                    pdfjsLib.getDocument(typedarray).promise.then(pdf => {
+                        this.pdfDoc = pdf;
+                        this.totalPages = pdf.numPages;
+                        this.pageBackgrounds.clear();
+                        this.renderPdfPageAndSetBackground(1);
+                    });
+                };
+                fileReader.readAsArrayBuffer(file);
+            },
+
+            renderPdfPageAndSetBackground: function(pageNum) {
+                document.getElementById('loading-mask').classList.remove('hidden');
+                if (this.pageBackgrounds.has(pageNum)) {
+                    this.setCanvasBackgroundImage(this.pageBackgrounds.get(pageNum));
+                    this.updateCanvasForPage(pageNum);
+                    return;
+                }
+                this.pdfDoc.getPage(pageNum).then(page => {
+                    const viewport = page.getViewport({ scale: 2.0 }); 
+                    const tempCanvas = document.createElement('canvas');
+                    const ctx = tempCanvas.getContext('2d');
+                    tempCanvas.height = viewport.height;
+                    tempCanvas.width = viewport.width;
+                    page.render({ canvasContext: ctx, viewport: viewport }).promise.then(() => {
+                        const dataUrl = tempCanvas.toDataURL('image/png');
+                        this.pageBackgrounds.set(pageNum, dataUrl);
+                        this.setCanvasBackgroundImage(dataUrl);
+                        this.updateCanvasForPage(pageNum);
+                    });
+                });
+            },
+
+            loadImageBackground: function(file) {
+                const reader = new FileReader();
+                reader.onload = (f) => {
+                    this.pdfDoc = null;
+                    this.totalPages = 1;
+                    this.pageBackgrounds.clear();
+                    const dataUrl = f.target.result;
+                    this.pageBackgrounds.set(1, dataUrl);
+                    this.setCanvasBackgroundImage(dataUrl);
+                    this.updateCanvasForPage(1);
+                };
+                reader.readAsDataURL(file);
+            },
+
+            setCanvasBackgroundImage: function(dataUrl) {
+                fabric.Image.fromURL(dataUrl, (img) => {
+                    const scale = this.A4_WIDTH / img.width;
+                    img.set({ scaleX: scale, scaleY: scale, opacity: 0.8, selectable: false, evented: false });
+                    this.canvas.setBackgroundImage(img, this.canvas.renderAll.bind(this.canvas));
+                    document.getElementById('loading-mask').classList.add('hidden');
+                });
+            },
+
+            changePage: function(deltaOrPage) {
+                let newPage = typeof deltaOrPage === 'number' && deltaOrPage < 10 ? this.currentPage + deltaOrPage : deltaOrPage;
+                if (newPage < 1 || newPage > this.totalPages || newPage === this.currentPage) return;
+                if (this.pdfDoc) this.renderPdfPageAndSetBackground(newPage);
+                else this.updateCanvasForPage(newPage);
+            },
+
+            updateCanvasForPage: function(pageNum) {
+                this.currentPage = pageNum;
+                this.selectedField = null;
+                this.selectedObjectsCount = 0;
+                this.canvas.clear();
+                this.initGrid();
+                
+                const pageFields = this.fields.filter(f => f.page === this.currentPage);
+                pageFields.forEach(field => this.createFabricObject(field));
+                
+                this.updatePreviewDataOnCanvas();
+                this.updateUI();
+            },
+
+            // --- 欄位 CRUD ---
+            addField: function() {
+                const newField = {
+                    id: 'field_' + Date.now(),
+                    name: 'FIELD_' + (this.fields.length + 1).toString().padStart(3, '0'),
+                    page: this.currentPage, section: 'Body', type: 'X', length: 10,
+                    x: 100, y: 100, width: 120, height: 35, fontSize: 10, mockValue: ''
+                };
+                this.fields.push(newField);
+                this.createFabricObject(newField, true);
+                this.updateUI();
+            },
+
+            createFabricObject: function(field, setActive = false) {
+                const isPrev = this.isPreviewMode;
+                const displayText = isPrev ? (field.mockValue || '[未設定]') : this.getDevDisplayText(field);
+                const textObj = new fabric.Textbox(displayText, {
+                    id: field.id, left: field.x, top: field.y, width: field.width, height: field.height,
+                    fontSize: field.fontSize, lineHeight: isPrev ? 1 : 1.2, fontFamily: 'monospace',
+                    backgroundColor: isPrev ? 'transparent' : this.COLOR_NORMAL,
+                    borderColor: isPrev ? 'transparent' : this.BORDER_SELECTED,
+                    cornerColor: this.BORDER_SELECTED, cornerSize: 6, transparentCorners: false,
+                    hasRotatingPoint: false, lockRotation: true, textAlign: 'left', splitByGrapheme: true,
+                    editable: false, selectable: !isPrev, evented: !isPrev
+                });
+                textObj.setControlsVisibility({ mt: false, mb: false, ml: true, mr: true, tr: false, tl: false, br: false, bl: false });
+                this.canvas.add(textObj);
+                if (isPrev) this.updatePreviewDataOnCanvas();
+                if (setActive && !isPrev) { this.canvas.setActiveObject(textObj); this.canvas.requestRenderAll(); }
+            },
+
+            getDevDisplayText: function(field) {
+                const char = field.type === 'X' ? 'X' : '9';
+                return `${field.name}\n[${char.repeat(field.length)}]`;
+            },
+
+            selectField: function(id) {
+                const field = this.fields.find(f => f.id === id);
+                if (!field) return;
+                if (field.page !== this.currentPage) {
+                    this.changePage(field.page);
+                    setTimeout(() => {
+                        const obj = this.canvas.getObjects().find(o => o.id === id);
+                        if (obj) { this.canvas.setActiveObject(obj); this.canvas.requestRenderAll(); }
+                    }, 500);
+                } else {
+                    const obj = this.canvas.getObjects().find(o => o.id === id);
+                    if (obj) { this.canvas.setActiveObject(obj); this.canvas.requestRenderAll(); }
+                }
+            },
+
+            deleteSelectedField: function() {
+                const activeObjs = this.canvas.getActiveObjects();
+                if (activeObjs && activeObjs.length > 0) {
+                    activeObjs.forEach(obj => { this.canvas.remove(obj); this.fields = this.fields.filter(f => f.id !== obj.id); });
+                    this.canvas.discardActiveObject();
+                    this.onSelectionCleared();
+                }
+            },
+
+            alignSelected: function(type) {
+                const activeSelection = this.canvas.getActiveObject();
+                if (!activeSelection || activeSelection.type !== 'activeSelection') return;
+                const objects = activeSelection.getObjects();
+                if (objects.length < 2) return;
+                
+                // 暫時解綁事件避免 UI 閃爍
+                this.canvas.off('selection:cleared'); this.canvas.off('selection:created');
+                this.canvas.discardActiveObject();
+
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                objects.forEach(obj => {
+                    const bound = obj.getBoundingRect();
+                    if (bound.left < minX) minX = bound.left; if (bound.top < minY) minY = bound.top;
+                    if (bound.left + bound.width > maxX) maxX = bound.left + bound.width; if (bound.top + bound.height > maxY) maxY = bound.top + bound.height;
+                });
+
+                const centerX = minX + (maxX - minX) / 2;
+                objects.forEach(obj => {
+                    switch (type) {
+                        case 'left': obj.set('left', minX); break; case 'right': obj.set('left', maxX - obj.width * obj.scaleX); break;
+                        case 'top': obj.set('top', minY); break; case 'bottom': obj.set('top', maxY - obj.height * obj.scaleY); break;
+                        case 'center-h': obj.set('left', centerX - (obj.width * obj.scaleX) / 2); break;
+                    }
+                    obj.setCoords(); this.syncObjectToModel(obj);
+                });
+
+                const sel = new fabric.ActiveSelection(objects, { canvas: this.canvas });
+                this.canvas.setActiveObject(sel); this.canvas.requestRenderAll();
+                
+                // 重新綁定
+                this.canvas.on('selection:cleared', () => this.onSelectionCleared());
+                this.canvas.on('selection:created', (e) => this.onObjectSelected(e));
+                this.updateUI();
+            },
+
+            // --- 資料匯出入 ---
+            exportMockData: function() {
+                const dataDict = {};
+                this.fields.forEach(f => { dataDict[f.name] = f.mockValue || ""; });
+                const blob = new Blob([JSON.stringify(dataDict, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = "mock_data.json"; a.click(); URL.revokeObjectURL(url);
+            },
+
+            importMockData: function(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const importedData = JSON.parse(e.target.result);
+                        this.fields.forEach(f => { if (importedData[f.name] !== undefined) f.mockValue = importedData[f.name]; });
+                        this.updatePreviewDataOnCanvas();
+                        this.updateUI();
+                        alert('測試資料匯入成功！');
+                    } catch (err) { alert('匯入失敗：無效的 JSON 格式。'); }
+                };
+                reader.readAsText(file);
+                event.target.value = '';
+            },
+
+            exportXML: function() {
+                const xmlObject = {
+                    document: {
+                        pageSetting: { width: this.A4_WIDTH, height: this.A4_HEIGHT, totalPages: this.totalPages },
+                        pages: Array.from({ length: this.totalPages }, (_, i) => i + 1).map(pageNum => ({
+                            pageIndex: pageNum,
+                            header: this.fields.filter(f => f.page === pageNum && f.section === 'Header'),
+                            body: this.fields.filter(f => f.page === pageNum && f.section === 'Body'),
+                            footer: this.fields.filter(f => f.page === pageNum && f.section === 'Footer'),
+                            grand: this.fields.filter(f => f.page === pageNum && f.section === 'Grand')
+                        }))
+                    }
+                };
+                const win = window.open('', '_blank');
+                if(win) {
+                    win.document.write(`<pre>${JSON.stringify(xmlObject, null, 2)}</pre>`);
+                    win.document.title = "匯出結果預覽";
+                }
+            }
+        };
+
+        // 啟動應用程式
+        window.onload = () => {
+            app.init();
+        };
+    </script>
+</body>
+</html>
